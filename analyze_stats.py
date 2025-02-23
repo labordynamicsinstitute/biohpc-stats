@@ -5,6 +5,7 @@ import numpy as np
 import argparse
 import io
 
+
 # Function to diagnose problematic lines
 def diagnose_bad_lines(file_path):
     with open(file_path, 'r') as file:
