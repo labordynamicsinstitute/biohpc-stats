@@ -1,5 +1,6 @@
 ---
 title: "Analyze BioHPC statistics"
+author: "Lars Vilhuber"
 output: html_document
 ---
 
@@ -27,6 +28,10 @@ latest_stats <- list.files(datapath, pattern = "stats_.*.csv", full.names = TRUE
 ```
 
 (reading from `r basename(latest_stats)`)
+
+## Overview
+
+The following statistics are based on the latest data available in the file `r basename(latest_stats)`, covering the previous 6 months. They do not take into account interactive sessions run via VNC, nor node reservations by individuals who can do so. These are only the jobs that used the SLURM scheduler.
 
 ```{r prep-data, echo=TRUE, include=FALSE, cache=TRUE}
 stats <- read_delim(latest_stats,
