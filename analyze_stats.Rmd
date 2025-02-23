@@ -1,0 +1,168 @@
+---
+title: "Analyze BioHPC statistics"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(here)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+
+datapath <- here::here()
+```
+
+```{r read-data, echo=FALSE, include=FALSE, cache=TRUE}
+
+latest_stats <- list.files(datapath, pattern = "stats_.*.csv", full.names = TRUE) %>% 
+  tibble(path = .) %>% 
+  mutate(timestamp = str_extract(path, "\\d{8}_\\d{6}")) %>% 
+  arrange(desc(timestamp)) %>% 
+  slice(1) %>% 
+  pull(path)
+
+```
+
+(reading from `r basename(latest_stats)`)
+
+```{r prep-data, echo=TRUE, include=FALSE, cache=TRUE}
+stats <- read_delim(latest_stats,
+                    delim = ";", escape_double = FALSE, 
+                    col_types = cols(), 
+                    trim_ws = TRUE)
+
+convert_time_to_seconds <- function(time_str) {
+  if (str_detect(time_str, "-")) {
+    parts <- str_split(time_str, "-|:", simplify = TRUE)
+    days <- as.numeric(parts[1])
+    hours <- as.numeric(parts[2])
+    minutes <- as.numeric(parts[3])
+    seconds <- as.numeric(parts[4])
+    return(days * 86400 + hours * 3600 + minutes * 60 + seconds)
+  } else {
+    parts <- str_split(time_str, ":", simplify = TRUE)
+    hours <- as.numeric(parts[1])
+    minutes <- as.numeric(parts[2])
+    seconds <- as.numeric(parts[3])
+    return(hours * 3600 + minutes * 60 + seconds)
+  }
+}
+
+convert_seconds_to_hms <- function(seconds) {
+  hours <- as.integer(floor(seconds / 3600))
+  minutes <- as.integer(floor((seconds %% 3600) / 60))
+  seconds <- as.integer(seconds %% 60)
+  return(sprintf("%02d:%02d:%02d", hours, minutes, seconds))
+}
+
+stats <- stats %>%
+  mutate(Elapsed = sapply(Elapsed, convert_time_to_seconds),
+         CPUTime = sapply(CPUTime, convert_time_to_seconds))
+
+filtered_stats <- stats %>%
+  filter(State == 'COMPLETED' & Elapsed >= 120)
+
+# Data analysis
+
+total_jobs <- nrow(stats)
+completed_jobs <- nrow(filter(stats, State == 'COMPLETED'))
+failed_jobs <- nrow(filter(stats, State == 'FAILED'))
+unique_users <- n_distinct(stats$User)
+
+filtered_total_jobs <- nrow(filtered_stats)
+filtered_completed_jobs <- nrow(filtered_stats)
+filtered_unique_users <- n_distinct(filtered_stats$User)
+
+runtime <- filtered_stats$Elapsed
+jobs_per_user <- filtered_stats %>% count(User)
+
+runtime_stats <- list(
+  avg_runtime = mean(runtime, na.rm = TRUE),
+  median_runtime = median(runtime, na.rm = TRUE),
+  max_runtime = max(runtime, na.rm = TRUE)
+)
+
+runtime_stats <- lapply(runtime_stats, convert_seconds_to_hms)
+
+jobs_per_user_stats <- list(
+  avg_jobs_per_user = mean(jobs_per_user$n, na.rm = TRUE),
+  median_jobs_per_user = median(jobs_per_user$n, na.rm = TRUE),
+  max_jobs_per_user = max(jobs_per_user$n, na.rm = TRUE)
+)
+```
+
+## Statistics 
+
+```{r report, results='asis', echo=FALSE}
+timestamp <- format(Sys.time(), "%Y%m%d")
+report_file <- file.path(datapath, paste0("report_", timestamp, ".md"))
+writeLines(c(
+  paste("- Total jobs:", total_jobs),
+  paste("- Completed jobs:", completed_jobs),
+  paste("- Failed jobs:", failed_jobs),
+  paste("- Unique users:", unique_users),
+  "",
+  paste("### Filtering out failed and jobs <2 min:"),
+  "",
+  paste("- Filtered total jobs:", filtered_total_jobs),
+  paste("- Filtered completed jobs:", filtered_completed_jobs),
+  paste("- Filtered unique users:", filtered_unique_users),
+  "",
+  "### Runtime statistics (H:M:s):",
+  "",
+  paste("- Average runtime:", runtime_stats$avg_runtime),
+  paste("- Median runtime:", runtime_stats$median_runtime),
+  paste("- Max runtime:", runtime_stats$max_runtime),
+    "",
+  "### Jobs per user statistics:",
+    "",
+  paste("- Average jobs per user:", jobs_per_user_stats$avg_jobs_per_user),
+  paste("- Median jobs per user:", jobs_per_user_stats$median_jobs_per_user),
+  paste("- Max jobs per user:", jobs_per_user_stats$max_jobs_per_user)
+), con = report_file)
+
+cat(readLines(report_file), sep = "\n")
+```
+
+## Plots
+
+Number of users and the number of jobs per week:
+
+```{r plots, echo=FALSE}
+filtered_stats <- filtered_stats %>%
+  mutate(week = floor_date(as.Date(Submit), "week"))
+
+start_date <- min(filtered_stats$week)
+
+users_per_week <- filtered_stats %>%
+  group_by(week) %>%
+  summarise(users = n_distinct(User))
+
+ggplot(users_per_week, aes(x = week, y = users)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Number of Users per Week", x = "Week", y = "Number of Users", subtitle = paste("Start Date:", format(start_date, "%b %d, %Y"))) +
+  theme_minimal()
+
+jobs_per_week <- filtered_stats %>%
+  group_by(week) %>%
+  summarise(jobs = n())
+
+ggplot(jobs_per_week, aes(x = week, y = jobs)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Number of Jobs per Week", x = "Week", y = "Number of Jobs", subtitle = paste("Start Date:", format(start_date, "%b %d, %Y"))) +
+  theme_minimal()
+```
+
+## Appendix
+
+### Load, Clean, and Analyze Data
+
+Identify the latest stats file based on the date-time stamp embedded in the file name and read the latest stats file.
+
+```{r showcode, ref.label="prep-data", eval=FALSE}
+```
