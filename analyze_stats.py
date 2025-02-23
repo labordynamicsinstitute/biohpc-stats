@@ -11,21 +11,30 @@ def diagnose_bad_lines(file_path):
     with open(file_path, 'r') as file:
         for i, line in enumerate(file):
             try:
-                pd.read_csv(io.StringIO(line))
+                pd.read_csv(io.StringIO(line), delimiter=';')
             except pd.errors.ParserError:
                 print(f"Skipping line {i + 1}: {line.strip()}")
 
 # Function to convert time strings to seconds
 def convert_time_to_seconds(time_str):
-    h, m, s = map(int, time_str.split(':'))
-    return h * 3600 + m * 60 + s
+    if '-' in time_str:
+        d, hms = time_str.split('-')
+        h, m, s = map(int, hms.split(':'))
+        return int(d) * 86400 + h * 3600 + m * 60 + s
+    else:
+        h, m, s = map(int, time_str.split(':'))
+        return h * 3600 + m * 60 + s
 
-# Function to parse JobID column
-def parse_job_id(job_id):
-    try:
-        return int(job_id.split('_')[0])
-    except ValueError:
-        return None
+# Remove this function as we no longer need to parse JobID
+# def parse_job_id(job_id):
+#     try:
+#         return int(job_id.split('_')[0])
+#     except (ValueError, AttributeError):
+#         return None
+
+# Function to convert date/time strings to datetime objects
+def convert_to_datetime(date_str):
+    return pd.to_datetime(date_str, format='%Y-%m-%dT%H:%M:%S')
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Run get_stats.sh and analyze the output CSV file.')
@@ -48,37 +57,42 @@ else:
 # Diagnose problematic lines
 diagnose_bad_lines(output_file)
 
-# Load the CSV file into a pandas DataFrame
-df = pd.read_csv(output_file, on_bad_lines='warn')
+# Specify data types for each column
+dtypes = {
+    'JobID': str,
+    'User': str,
+    'Account': str,
+    'JobName': str,
+    'State': str,
+    'Elapsed': str,
+    'CPUTime': str,
+    'Nodelist': str,
+    'Submit': str,
+    'End': str
+}
 
-# Parse JobID column
-df['JobID'] = df['JobID'].apply(parse_job_id)
+# Load the CSV file into a pandas DataFrame with semicolon delimiter and specified data types
+df = pd.read_csv(output_file, delimiter=';', dtype=dtypes, on_bad_lines='warn')
 
 # Clean and convert columns
-df['MaxRSS'] = pd.to_numeric(df['MaxRSS'].str.replace('[^0-9]', ''), errors='coerce')
-df['AveRSS'] = pd.to_numeric(df['AveRSS'].str.replace('[^0-9]', ''), errors='coerce')
 df['Elapsed'] = df['Elapsed'].apply(convert_time_to_seconds)
+df['CPUTime'] = df['CPUTime'].apply(convert_time_to_seconds)
+df['Submit'] = df['Submit'].apply(convert_to_datetime)
+df['End'] = df['End'].apply(convert_to_datetime)
+
+# Handle NodeList column which might contain comma-separated multiple entries
+df['NodeList'] = df['NodeList'].str.split(',')
 
 # Analyze the data
 total_jobs = len(df)
 completed_jobs = len(df[df['State'] == 'COMPLETED'])
 failed_jobs = len(df[df['State'] == 'FAILED'])
+unique_users = df['User'].nunique()
 
-memory_used = df['MaxRSS']
-memory_requested = df['AveRSS']
 runtime = df['Elapsed']
 jobs_per_user = df['User'].value_counts()
 
 # Calculate statistics
-memory_stats = {
-    'avg_memory_used': memory_used.mean(),
-    'median_memory_used': memory_used.median(),
-    'max_memory_used': memory_used.max(),
-    'avg_memory_requested': memory_requested.mean(),
-    'median_memory_requested': memory_requested.median(),
-    'max_memory_requested': memory_requested.max()
-}
-
 runtime_stats = {
     'avg_runtime': runtime.mean(),
     'median_runtime': runtime.median(),
@@ -97,13 +111,7 @@ with open(report_file, 'w') as file:
     file.write(f"Total jobs: {total_jobs}\n")
     file.write(f"Completed jobs: {completed_jobs}\n")
     file.write(f"Failed jobs: {failed_jobs}\n")
-    file.write("Memory usage statistics:\n")
-    file.write(f"  Average memory used: {memory_stats['avg_memory_used']}\n")
-    file.write(f"  Median memory used: {memory_stats['median_memory_used']}\n")
-    file.write(f"  Max memory used: {memory_stats['max_memory_used']}\n")
-    file.write(f"  Average memory requested: {memory_stats['avg_memory_requested']}\n")
-    file.write(f"  Median memory requested: {memory_stats['median_memory_requested']}\n")
-    file.write(f"  Max memory requested: {memory_stats['max_memory_requested']}\n")
+    file.write(f"Unique users: {unique_users}\n")
     file.write("Runtime statistics:\n")
     file.write(f"  Average runtime: {runtime_stats['avg_runtime']}\n")
     file.write(f"  Median runtime: {runtime_stats['median_runtime']}\n")
@@ -117,6 +125,6 @@ with open(report_file, 'w') as file:
 print(f"Total jobs: {total_jobs}")
 print(f"Completed jobs: {completed_jobs}")
 print(f"Failed jobs: {failed_jobs}")
-print("Memory usage statistics:", memory_stats)
+print(f"Unique users: {unique_users}")
 print("Runtime statistics:", runtime_stats)
 print("Jobs per user statistics:", jobs_per_user_stats)
