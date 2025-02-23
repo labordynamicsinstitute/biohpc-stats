@@ -36,7 +36,7 @@ jobs:
         Rscript -e 'rmarkdown::render("analyze_stats.Rmd")'
 
     - name: Upload rendered HTML
-      uses: actions/upload-pages-artifact@v4
+      uses: actions/upload-pages-artifact@v3.0.1   
       with:
         path: .
 
